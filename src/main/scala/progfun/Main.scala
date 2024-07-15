@@ -2,11 +2,6 @@ package fr.esgi.al.funprog
 
 import scala.annotation.tailrec
 
-enum Mode:
-  case
-    STREAMING, // the mowers are moving by the console input
-    FULL // the mowers are moving by the input file present in config data
-
 final class Area(val maxX: Int, val maxY: Int)
 object Area {
   def apply(maxX: Int, maxY: Int): Area = {
@@ -31,25 +26,12 @@ object Position {
   }
 }
 
-final class ConfigData(val id: Int, val position: Position, val orientation: Orientation, val sequences: List[Movement])
-final class ConfigGame(val name: String, val mode: Mode, val area: Area, val data: List[ConfigData])
-object ConfigGame {
-  def fromConsole(): ConfigGame = {
-    val area = Area(scala.io.StdIn.readInt(), scala.io.StdIn.readInt())
-    val data = List(
-      new ConfigData(1, Position(scala.io.StdIn.readInt(), scala.io.StdIn.readInt()), Orientation.NORTH, List(Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.FORWARD)),
-      new ConfigData(2, Position(scala.io.StdIn.readInt(), scala.io.StdIn.readInt()), Orientation.EAST, List(Movement.FORWARD, Movement.FORWARD, Movement.RIGHT, Movement.FORWARD, Movement.FORWARD, Movement.RIGHT, Movement.FORWARD, Movement.RIGHT, Movement.RIGHT, Movement.FORWARD))
-    )
-    new ConfigGame("game2", Mode.STREAMING, area, data)
-  }
-}
-
-final class Mower(val id: Int, val position: Position, val orientation: Orientation, val sequences: List[Movement]) {
+final case class Mower(id: Int, position: Position, orientation: Orientation, sequences: List[Movement]) {
   def move(movement: Movement): Mower = {
     movement match {
-      case Movement.LEFT => new Mower(id, position, turnLeft(orientation), sequences)
-      case Movement.RIGHT => new Mower(id, position, turnRight(orientation), sequences)
-      case Movement.FORWARD => new Mower(id, moveForward(position, orientation), orientation, sequences)
+      case Movement.LEFT => this.copy(orientation = turnLeft(orientation))
+      case Movement.RIGHT => this.copy(orientation = turnRight(orientation))
+      case Movement.FORWARD => this.copy(position = moveForward(position, orientation))
     }
   }
 
@@ -91,46 +73,112 @@ final class Lawn(val area: Area, val mowers: List[Mower]) {
   }
 }
 
-final class Game(val config: ConfigGame) {
-  def play(): Unit = {
-    config.mode match {
-      case Mode.STREAMING => playStreaming()
-      case Mode.FULL => playFull()
+enum Mode:
+  case FULL, STREAMING
+
+final case class Config(name: String, mode: Mode)
+
+final case class ConfigData(area: Area, mowers: List[Mower])
+object ConfigData {
+  def fromConsole(): (Area, List[Mower]) = {
+    val input = scala.io.StdIn.readChar()
+    //if i tape s
+    if(input != 'S') {
+      val area = Area(5, 5)
+      val mowers = List(
+        Mower(1, Position(1, 2), Orientation.NORTH, List(Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.FORWARD)),
+        Mower(2, Position(3, 3), Orientation.EAST, List(Movement.FORWARD, Movement.FORWARD, Movement.RIGHT, Movement.FORWARD, Movement.FORWARD, Movement.RIGHT, Movement.FORWARD, Movement.RIGHT, Movement.RIGHT, Movement.FORWARD))
+      )
+      (area, mowers)
+    } else {
+        val area = Area(5, 5)
+        val mowers = Nil
+        (area, mowers)
+
     }
   }
+}
 
-  private def playFull(): Unit = {
-    val mowers = config.data.map(data => new Mower(data.id, data.position, data.orientation, data.sequences))
-    val lawn = new Lawn(config.area, mowers)
-    val finalMowers = lawn.mowers.map(mower => lawn.move(mower, mower.sequences))
-    finalMowers.foreach(mower => println(s"${mower.position.x} ${mower.position.y} ${mower.orientation}"))
+sealed trait GameMode {
+  def name: String
+  def run(): Report
+}
+
+final case class FullMode(name: String, configData: ConfigData) extends GameMode {
+  override def run(): Report = {
+    println("run full mode with name: " + name)
+    val lawn = new Lawn(configData.area, configData.mowers)
+    val mowers = configData.mowers.map(mower => lawn.move(mower, mower.sequences))
+    mowers.foreach(mower => println(s"${mower.position.x} ${mower.position.y} ${mower.orientation}"))
+    Report()
+  }
+}
+
+final case class StreamingMode(name: String) extends GameMode {
+  override def run(): Report = {
+    val (initArea, initMowers) = ConfigData.fromConsole()
+    val lawn = new Lawn(initArea, initMowers)
+    val mowers = initMowers.map(mower => lawn.move(mower, mower.sequences))
+    mowers.foreach(mower => println(s"${mower.position.x} ${mower.position.y} ${mower.orientation}"))
+
+    val newLawn = new Lawn(initArea, mowers)
+    runHelper(Some(newLawn))
   }
 
-  private def playStreaming(): Unit = {
-    val configGame = ConfigGame.fromConsole()
-    try {
-      val mowers = configGame.data.map(data => new Mower(data.id, data.position, data.orientation, data.sequences))
-      val lawn = new Lawn(configGame.area, mowers)
-      val finalMowers = lawn.mowers.map(mower => lawn.move(mower, mower.sequences))
-      finalMowers.foreach(mower => println(s"${mower.position.x} ${mower.position.y} ${mower.orientation}"))
-    } catch {
-      case e: Exception => println(e)
+  @tailrec
+  private def runHelper(lawn: Option[Lawn]): Report = {
+    lawn match
+      case Some(lawn) => {
+        val (_, mowers) = ConfigData.fromConsole()
+        if(mowers.isEmpty) Report()
+        else {
+          val newLawn = new Lawn(lawn.area, mowers)
+          val newMowers = mowers.map(mower => newLawn.move(mower, mower.sequences))
+          mowers.foreach(mower => println(s"${mower.position.x} ${mower.position.y} ${mower.orientation}"))
+
+          val newNewLawn = new Lawn(lawn.area, newMowers)
+          runHelper(Some(newNewLawn))
+        }
+      }
+      case None => Report()
+  }
+}
+
+final case class Report() {
+    def exportTo(): Unit = {
+        println("export report")
+    }
+}
+final case class Program(config: Config) {
+  def run(): Report = {
+    println("run program with name: " + config.name)
+    config.mode match {
+      case Mode.FULL => {
+        //val configData = ConfigData.fromInputFile()
+        val configData = ConfigData(Area(5, 5), List(
+          Mower(1, Position(1, 2), Orientation.NORTH, List(Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.FORWARD)),
+          Mower(2, Position(3, 3), Orientation.EAST, List(Movement.FORWARD, Movement.FORWARD, Movement.RIGHT, Movement.FORWARD, Movement.FORWARD, Movement.RIGHT, Movement.FORWARD, Movement.RIGHT, Movement.RIGHT, Movement.FORWARD))
+        ))
+        FullMode(config.name, configData).run()
+      }
+      case Mode.STREAMING => StreamingMode(config.name).run()
     }
   }
 }
 
 @main
 def Main(): Unit = {
-  val configGame = new ConfigGame("Game1", Mode.STREAMING, new Area(5, 5), List(
-    new ConfigData(1, new Position(1, 2), Orientation.NORTH, List(Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.LEFT, Movement.FORWARD, Movement.FORWARD)),
-    new ConfigData(2, new Position(3, 3), Orientation.EAST, List(Movement.FORWARD, Movement.FORWARD, Movement.RIGHT, Movement.FORWARD, Movement.FORWARD, Movement.RIGHT, Movement.FORWARD, Movement.RIGHT, Movement.RIGHT, Movement.FORWARD))
-  ))
+  //full
+  val config = Config("config", Mode.FULL)
+  val program = Program(config)
 
+  val reporting = program.run()
+  reporting.exportTo()
+  
+  //streaming
+  val config2 = Config("config", Mode.STREAMING)
+  val program2 = Program(config2)
 
-  val game = new Game(configGame)
-  try {
-    game.play()
-  } catch {
-    case e: Exception => println(e)
-  }
+  val reporting2 = program2.run()
+  reporting2.exportTo()
 }
